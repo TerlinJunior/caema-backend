@@ -18,6 +18,9 @@ app.use(express.json());
 // Configuração do Multer para receber imagens na memória (RAM) temporariamente
 const upload = multer({ storage: multer.memoryStorage() });
 
+// ==========================================
+// ROTA POST: SALVAR NOVA VISTORIA (Técnico)
+// ==========================================
 app.post('/vistorias', upload.array('fotos'), async (req, res) => {
   try {
     const { categoria, inspetor, itens, cabecalho, rodape } = req.body;
@@ -80,6 +83,27 @@ app.post('/vistorias', upload.array('fotos'), async (req, res) => {
   } catch (error) {
     console.error("Erro interno do servidor:", error);
     res.status(500).json({ error: "Falha ao processar a vistoria." });
+  }
+});
+
+// ==========================================
+// ROTA GET: BUSCAR VISTORIAS (Administrador)
+// ==========================================
+app.get('/vistorias', async (req, res) => {
+  try {
+    // Busca a vistoria principal e traz junto as respostas/fotos da tabela ItemVistoria
+    // O order garante que as mais recentes apareçam no topo da lista
+    const { data, error } = await supabase
+      .from('Vistoria')
+      .select('*, ItemVistoria(*)')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    
+    res.status(200).json(data);
+  } catch (error) {
+    console.error("Erro ao buscar vistorias:", error);
+    res.status(500).json({ error: "Falha ao buscar vistorias da nuvem." });
   }
 });
 
