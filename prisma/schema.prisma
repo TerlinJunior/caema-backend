@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Vistoria {
+  id          String         @id @default(uuid())
+  categoria   String         // 'eletrica', 'hidraulica', 'qualidade'
+  inspetor    String         // Nome do vistoriador em campo
+  data        DateTime       @default(now())
+  itens       ItemVistoria[] // Relacionamento com as respostas
+}
+
+model ItemVistoria {
+  id          String   @id @default(uuid())
+  vistoriaId  String
+  vistoria    Vistoria @relation(fields: [vistoriaId], references: [id], onDelete: Cascade)
+  
+  perguntaId  String   // Identificador da planilha (Ex: 'E1', 'H3')
+  status      String   // 'Conforme', 'Não Conforme', 'N/A'
+  observacao  String?  // Texto de justificativa (Opcional)
+  fotoUrl     String?  // Link público da imagem salva no Supabase (Opcional)
+}
