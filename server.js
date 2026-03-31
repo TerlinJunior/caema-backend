@@ -91,16 +91,30 @@ app.post('/vistorias', upload.array('fotos'), async (req, res) => {
 // ==========================================
 app.get('/vistorias', async (req, res) => {
   try {
-    // Busca a vistoria principal e traz junto as respostas/fotos da tabela ItemVistoria
-    // O order garante que as mais recentes apareçam no topo da lista
-    const { data, error } = await supabase
+    // 1. Busca todas as vistorias principais primeiro
+    const { data: vistorias, error: erroVistorias } = await supabase
       .from('Vistoria')
-      .select('*, ItemVistoria(*)')
+      .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
-    
-    res.status(200).json(data);
+    if (erroVistorias) throw erroVistorias;
+
+    // 2. Busca todas as respostas e fotos
+    const { data: itens, error: erroItens } = await supabase
+      .from('ItemVistoria')
+      .select('*');
+
+    if (erroItens) throw erroItens;
+
+    // 3. Junta as respostas dentro da vistoria correta aqui no servidor
+    const vistoriasCompletas = vistorias.map(vist => {
+      return {
+        ...vist,
+        ItemVistoria: itens.filter(item => item.vistoriaId === vist.id)
+      };
+    });
+
+    res.status(200).json(vistoriasCompletas);
   } catch (error) {
     console.error("Erro ao buscar vistorias:", error);
     res.status(500).json({ error: "Falha ao buscar vistorias da nuvem." });
