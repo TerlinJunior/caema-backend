@@ -7,96 +7,64 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3333;
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 app.use(cors());
 app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ==========================================
-// ROTA POST: CADASTRAR USUÁRIO
-// ==========================================
+// CADASTRAR USUÁRIO
 app.post('/cadastro', async (req, res) => {
   try {
     const { matricula, nome, senha } = req.body;
-    
-    if (matricula.toLowerCase() === 'admin') {
-      return res.status(400).json({ error: "Matrícula reservada." });
-    }
+    if (matricula.toLowerCase() === 'admin') return res.status(400).json({ error: "Reserva de sistema." });
 
-    // Tenta inserir no banco
-    const { error } = await supabase
-      .from('Usuarios')
-      .insert([{ matricula, nome, senha }]);
-
-    // Se der erro, geralmente é porque a matrícula já existe (Primary Key)
+    const { error } = await supabase.from('Usuarios').insert([{ matricula, nome, senha }]);
     if (error) throw error; 
-    
-    res.status(201).json({ message: "Usuário cadastrado com sucesso!" });
+    res.status(201).json({ message: "Sucesso!" });
   } catch (error) {
-    console.error("Erro no cadastro:", error);
-    res.status(500).json({ error: "Falha ao cadastrar. Esta matrícula já existe." });
+    res.status(500).json({ error: "Matrícula já cadastrada ou erro de conexão." });
   }
 });
 
-// ==========================================
-// ROTA POST: FAZER LOGIN
-// ==========================================
+// LOGIN
 app.post('/login', async (req, res) => {
   try {
     const { matricula, senha } = req.body;
-
-    const { data, error } = await supabase
-      .from('Usuarios')
-      .select('*')
-      .eq('matricula', matricula)
-      .eq('senha', senha)
-      .single(); // Exige que encontre exatamente 1 usuário
-
-    if (error || !data) {
-      return res.status(401).json({ error: "Matrícula ou senha incorretos." });
-    }
-
+    const { data, error } = await supabase.from('Usuarios').select('*').eq('matricula', matricula).eq('senha', senha).single();
+    if (error || !data) return res.status(401).json({ error: "Dados incorretos." });
     res.status(200).json(data);
   } catch (error) {
-    console.error("Erro no login:", error);
-    res.status(500).json({ error: "Erro interno do servidor." });
+    res.status(500).json({ error: "Erro no servidor." });
   }
 });
 
-// ==========================================
-// ROTA POST: SALVAR NOVA VISTORIA (Técnico)
-// ==========================================
+// SALVAR VISTORIA
 app.post('/vistorias', upload.array('fotos'), async (req, res) => {
   try {
     const { categoria, inspetor, itens, cabecalho, rodape } = req.body;
-    
     const itensParseados = JSON.parse(itens);
-    const cabecalhoParseado = JSON.parse(cabecalho);
-    const rodapeParseado = JSON.parse(rodape);
-
     const idVistoria = Date.now().toString();
-    const { error: erroVistoria } = await supabase
-      .from('Vistoria')
-      .insert([{ 
-        id: idVistoria, 
-        categoria, 
-        inspetor, 
-        cabecalho: cabecalhoParseado, 
-        rodape: rodapeParseado 
-      }]);
 
+    // 1. Salva a Vistoria Pai
+    const { error: erroVistoria } = await supabase.from('Vistoria').insert([{ 
+        id: idVistoria, categoria, inspetor, 
+        cabecalho: JSON.parse(cabecalho), 
+        rodape: JSON.parse(rodape) 
+    }]);
     if (erroVistoria) throw erroVistoria;
 
-    for (const item of itensParseados) {
+    // 2. Processa os Itens
+    const promessasItens = itensParseados.map(async (item) => {
       let urlDaFotoSalva = null;
+      
+      // Procura a foto específica para este ID de pergunta
       const fotoArquivo = req.files?.find(f => f.originalname.includes(`foto_${item.perguntaId}`));
       
       if (fotoArquivo) {
-        const nomeArquivo = `${idVistoria}_${item.perguntaId}.jpg`;
+        // Nome único usando timestamp para evitar cache ou sobreposição
+        const nomeArquivo = `${idVistoria}_${item.perguntaId}_${Date.now()}.jpg`;
         const { error: erroUpload } = await supabase.storage
           .from('fotos-vistorias')
           .upload(nomeArquivo, fotoArquivo.buffer, { contentType: 'image/jpeg' });
@@ -107,55 +75,41 @@ app.post('/vistorias', upload.array('fotos'), async (req, res) => {
         }
       }
 
-      await supabase.from('ItemVistoria').insert([{
-        id: Date.now().toString() + Math.random().toString(36).substring(2, 7),
+      return supabase.from('ItemVistoria').insert([{
         vistoriaId: idVistoria,
         perguntaId: item.perguntaId,
         status: item.status,
         observacao: item.observacao,
         fotoUrl: urlDaFotoSalva
       }]);
-    }
-
-    res.status(201).json({ message: "Vistoria recebida e salva com sucesso!" });
-  } catch (error) {
-    console.error("Erro interno do servidor:", error);
-    res.status(500).json({ error: "Falha ao processar a vistoria." });
-  }
-});
-
-// ==========================================
-// ROTA GET: BUSCAR VISTORIAS (Administrador)
-// ==========================================
-app.get('/vistorias', async (req, res) => {
-  try {
-    const { data: vistorias, error: erroVistorias } = await supabase
-      .from('Vistoria')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (erroVistorias) throw erroVistorias;
-
-    const { data: itens, error: erroItens } = await supabase
-      .from('ItemVistoria')
-      .select('*');
-
-    if (erroItens) throw erroItens;
-
-    const vistoriasCompletas = vistorias.map(vist => {
-      return {
-        ...vist,
-        ItemVistoria: itens.filter(item => item.vistoriaId === vist.id)
-      };
     });
 
-    res.status(200).json(vistoriasCompletas);
+    await Promise.all(promessasItens);
+    res.status(201).json({ message: "Vistoria Salva!" });
   } catch (error) {
-    console.error("Erro ao buscar vistorias:", error);
-    res.status(500).json({ error: "Falha ao buscar vistorias da nuvem." });
+    console.error(error);
+    res.status(500).json({ error: "Erro ao salvar." });
   }
 });
 
-app.listen(port, () => {
-  console.log(`🚀 Servidor rodando na porta ${port}`);
+// BUSCAR VISTORIAS (Otimizado)
+app.get('/vistorias', async (req, res) => {
+  try {
+    // Buscamos as vistorias já trazendo seus itens relacionados (Inner Join do Supabase)
+    const { data, error } = await supabase
+      .from('Vistoria')
+      .select(`
+        *,
+        ItemVistoria (*)
+      `)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.status(200).json(data);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro ao buscar." });
+  }
 });
+
+app.listen(port, () => console.log(`🚀 Porta ${port}`));
